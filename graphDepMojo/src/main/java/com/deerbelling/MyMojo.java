@@ -1,20 +1,28 @@
 package com.deerbelling;
 
 import java.io.File;
-import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
+import org.apache.commons.lang3.StringUtils;
+import org.apache.maven.artifact.Artifact;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.project.MavenProject;
-import org.reflections.Reflections;
+
+import javassist.CannotCompileException;
+import javassist.ClassPool;
+import javassist.CtClass;
+import javassist.CtMethod;
+import javassist.NotFoundException;
+import javassist.expr.ExprEditor;
+import javassist.expr.MethodCall;
 
 /**
  * Goal which touches a timestamp file.
@@ -25,11 +33,6 @@ import org.reflections.Reflections;
  */
 public class MyMojo extends AbstractMojo {
 
-	// private static final String[] BASEDIR_EXPRESSIONS = { "${basedir}",
-	// "${pom.basedir}", "${project.basedir}" };
-
-	private Map<String, List<File>> classMap = new HashMap<String, List<File>>();
-
 	/**
 	 * @parameter expression="${project}"
 	 * @required
@@ -37,32 +40,44 @@ public class MyMojo extends AbstractMojo {
 	 */
 	private MavenProject project;
 
-	/**
-	 * Location of the file.
-	 * 
-	 * @parameter expression="${project.build.directory}"
-	 * @required
-	 */
-	private File outputDirectory;
+	private static final String LABEL_REF_COUNT = "###################### %s / LIB REFERENCES COUNT #####################";
+	private static final String LABEL_REF_UNUSED = "##################### %s / LIB REFERENCES UNUSED #####################";
+	private static final String LABEL_NON_DECLARED_REF_COUNT = "############### %s / NON DECLARED LIB REFERENCES COUNT ###############";
 
+	@SuppressWarnings("unchecked")
 	public void execute() throws MojoExecutionException {
+
+		Map<String, Set<File>> classMap = new HashMap<String, Set<File>>();
+		Map<String, Integer> countDependenciesMap = new HashMap<String, Integer>();
+		Map<String, Integer> countExternalLibMap = new HashMap<String, Integer>();
 
 		try {
 
-			List compileCpElem = project.getCompileClasspathElements();
+			List<String> classpathElements = project.getCompileClasspathElements();
+			classpathElements.addAll(project.getTestClasspathElements());
 
-			Reflections reflections = new Reflections("my.package.prefix");
-			
+			for (Artifact artifact : (Set<Artifact>) project.getDependencyArtifacts()) {
+				if (artifact != null && artifact.getFile() != null) {
+					countDependenciesMap.put(artifact.getFile().toString(), 0);
+				}
+			}
 
-			for (Object src : compileCpElem) {
-				getLog().info("getClass : " + src.getClass());
-				getLog().info("toString : " + src.toString());
+			URLClassLoader urlClassLoader = initClassLoader(classpathElements);
+			Thread.currentThread().setContextClassLoader(urlClassLoader);
+
+			final ClassPool pool = new ClassPool(ClassPool.getDefault());
+			setClasspath(pool, classpathElements);
+
+			getLog().debug("Project classpath ************************ ");
+
+			for (Object src : classpathElements) {
+				getLog().debug("- " + src.toString());
 
 				if (src instanceof String) {
 
 					String dirname = (String) src;
 
-					List<File> files = new ArrayList<File>();
+					Set<File> files = new HashSet<File>();
 
 					findFile(new File(dirname), files);
 
@@ -72,19 +87,15 @@ public class MyMojo extends AbstractMojo {
 				}
 			}
 
+			getLog().debug("****************************************** ");
+
 			for (String dirname : classMap.keySet()) {
 
 				for (File file : classMap.get(dirname)) {
 
-					getLog().info("   dirname : " + dirname);
-					getLog().info("   file : " + file.getPath());
-					getLog().info("   file name : " + file.getName());
-					getLog().info("   file.getAbsolutePath() : " + file.getAbsolutePath());
-					getLog().info("   file.getCanonicalPath() : " + file.getCanonicalPath());
-
-					// String classname = file.getName().substring(0,
-					// file.getName().indexOf('.'));
-					// getLog().info(" class name : " + classname);
+					getLog().debug("   dirname : " + dirname);
+					getLog().debug("   file name : " + file.getName());
+					getLog().debug("   file path: " + file.getPath());
 
 					String classname = file.getPath().substring(dirname.length(), file.getPath().lastIndexOf('.'));
 
@@ -92,35 +103,118 @@ public class MyMojo extends AbstractMojo {
 							? classname.substring(1).replace(File.separatorChar, '.')
 							: classname.replace(File.separatorChar, '.');
 
-					getLog().info("         class name : " + classname);
+					getLog().debug("   class name : " + classname);
 
-					Class clazz = getClassLoader().loadClass(classname);
+					try {
+						CtClass ctClass = pool.get(classname);
+						getLog().debug("javassist class : " + ctClass.getName());
+						CtMethod[] methods = ctClass.getDeclaredMethods();
+						for (CtMethod method : methods) {
+							getLog().debug("******* method : " + method.getLongName());
 
-					getLog().info("         haaaaaaaaa : " + clazz.getName());
-					
-					getLog().info("         declared classes : " + Arrays.asList(clazz.getDeclaredClasses()));
-					
-					getLog().info("         classes : "+Arrays.asList(clazz.getClasses()));
-					getLog().info("         getTypeParameters : "+Arrays.asList(clazz.getTypeParameters()));
-					
-					
-					getLog().info("res2 : "+getClassLoader().getResource("java/io/IOException.class"));
-					getLog().info("res2 : "+getClassLoader().getResource("java/io"));
-					
+							method.instrument(new ExprEditor() {
+								public void edit(MethodCall m) throws CannotCompileException {
+
+									if (m != null && StringUtils.isNotBlank(m.getClassName())) {
+
+										getLog().debug("** callee ClassName : " + m.getClassName());
+										getLog().debug("** callee MethodName : " + m.getMethodName());
+										getLog().debug("** callee Signature : " + m.getSignature());
+
+										String className = m.getClassName();
+
+										if (method.getDeclaringClass() != null
+												&& StringUtils.isNotBlank(method.getDeclaringClass().getName())
+												&& !className.equals(method.getDeclaringClass().getName())) {
+											className = method.getDeclaringClass().getName();
+											getLog().debug("** callee DeclaringClass : " + className);
+										}
+
+										String classFilePath = m.getClassName().replace('.', '/') + ".class";
+										URL url = urlClassLoader.getResource(classFilePath);
+
+										getLog().debug("** find in : " + url);
+
+										if (url != null) {
+											String file = url.getFile();
+											// int endIndex =
+											// (file.contains("!"))?file.lastIndexOf('!'):file.length();
+											// String lib =
+											// file.substring((file.lastIndexOf(':')
+											// + 1), endIndex);
+
+											// Don't save non packaged lib (may
+											// be
+											// changed).
+
+											if (file.contains("!")) {
+												String lib = file.substring((file.lastIndexOf(':') + 1),
+														file.lastIndexOf('!'));
+
+												getLog().debug("** lib name : " + lib);
+
+												if (countDependenciesMap.containsKey(lib)) {
+													int count = countDependenciesMap.get(lib).intValue() + 1;
+													countDependenciesMap.replace(lib, count);
+												} else if (countExternalLibMap.containsKey(lib)) {
+													int count = countExternalLibMap.get(lib).intValue() + 1;
+													countExternalLibMap.replace(lib, count);
+												} else {
+													countExternalLibMap.put(lib, 1);
+												}
+											}
+										}
+
+									} else {
+
+									}
+
+									getLog().debug("********************************");
+
+								}
+							});
+						}
+
+					} catch (NotFoundException e) {
+						getLog().error(e);
+					} catch (CannotCompileException e) {
+						getLog().error(e);
+					}
+				}
+			}
+			
+			Set<String> libRefCount = new HashSet<>();
+			Set<String> libUnsedRef = new HashSet<>();
+			
+			for (String libKey : countDependenciesMap.keySet()) {
+				int countRef = countDependenciesMap.get(libKey);
+				if (countRef == 0){
+					libUnsedRef.add("# " + libKey);
+				} else {
+					libRefCount.add("# " + libKey + " : " + countDependenciesMap.get(libKey));
 				}
 			}
 
-		} catch (DependencyResolutionRequiredException e) {
-			e.printStackTrace();
-		} catch (IOException e) {
-			e.printStackTrace();
-		} catch (ClassNotFoundException e) {
-			e.printStackTrace();
-		}
+			getLog().info(String.format(LABEL_REF_COUNT, project.getName()));
+			for (String libRef : libRefCount) {
+				getLog().info(libRef);
+			}
+			getLog().info(String.format(LABEL_REF_UNUSED, project.getName()));
+			for (String libUnsed : libUnsedRef) {
+				getLog().info(libUnsed);
+			}
+			getLog().info(String.format(LABEL_NON_DECLARED_REF_COUNT, project.getName()));
+			for (String libKey : countExternalLibMap.keySet()) {
+				getLog().info("# " + libKey + " : " + countExternalLibMap.get(libKey));
+			}
+			getLog().info(StringUtils.repeat('#', LABEL_REF_COUNT.length() + project.getName().length()));
 
+		} catch (DependencyResolutionRequiredException e) {
+			throw new MojoExecutionException("Required dependecy problem.", e);
+		}
 	}
 
-	private void findFile(File file, List<File> classList) {
+	private void findFile(File file, Set<File> classList) {
 		if (file.isDirectory()) {
 			for (File child : file.listFiles()) {
 				if (child != null)
@@ -132,20 +226,27 @@ public class MyMojo extends AbstractMojo {
 		}
 	}
 
-	private URLClassLoader getClassLoader() throws MojoExecutionException {
+	private URLClassLoader initClassLoader(List<String> classpathElements) throws MojoExecutionException {
 		try {
-			List<String> classpathElements = project.getCompileClasspathElements();
-			classpathElements.add(project.getBuild().getOutputDirectory());
-			classpathElements.add(project.getBuild().getTestOutputDirectory());
 			URL urls[] = new URL[classpathElements.size()];
 
 			for (int i = 0; i < classpathElements.size(); ++i) {
 				urls[i] = new File((String) classpathElements.get(i)).toURI().toURL();
 			}
-			return new URLClassLoader(urls, getClass().getClassLoader());
-		} catch (Exception e)// gotta catch em all
-		{
-			throw new MojoExecutionException("Couldn't create a classloader.", e);
+			return new URLClassLoader(urls);
+		} catch (Exception e) {
+			throw new MojoExecutionException("Problem to create custom classloader.", e);
 		}
 	}
+
+	private void setClasspath(ClassPool classPool, List<String> classpathElements) throws MojoExecutionException {
+		try {
+			for (int i = 0; i < classpathElements.size(); ++i) {
+				classPool.appendClassPath((String) classpathElements.get(i));
+			}
+		} catch (Exception e) {
+			throw new MojoExecutionException("Problem to add classpath in javassist class pool.", e);
+		}
+	}
+
 }
