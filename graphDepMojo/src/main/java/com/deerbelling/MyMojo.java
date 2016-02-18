@@ -113,6 +113,8 @@ public class MyMojo extends AbstractMojo {
 							getLog().debug("******* method : " + method.getLongName());
 
 							method.instrument(new ExprEditor() {
+
+								@Override
 								public void edit(MethodCall m) throws CannotCompileException {
 
 									if (m != null && StringUtils.isNotBlank(m.getClassName())) {
@@ -137,20 +139,30 @@ public class MyMojo extends AbstractMojo {
 
 										if (url != null) {
 											String file = url.getFile();
-											// int endIndex =
-											// (file.contains("!"))?file.lastIndexOf('!'):file.length();
-											// String lib =
-											// file.substring((file.lastIndexOf(':')
-											// + 1), endIndex);
-
-											// Don't save non packaged lib (may
-											// be
-											// changed).
-
-											if (file.contains("!")) {
-												String lib = file.substring((file.lastIndexOf(':') + 1),
-														file.lastIndexOf('!'));
-
+											int endIndex = (file.contains("!")) ? file.lastIndexOf('!') : file.length();
+											String lib = file.substring((file.lastIndexOf(':') + 1), endIndex);
+											if (lib.endsWith(".class")) {
+												if (lib.startsWith(project.getBuild().getOutputDirectory())) {
+													lib = project.getBuild().getOutputDirectory();
+													if (countDependenciesMap.containsKey(lib)) {
+														int count = countDependenciesMap.get(lib).intValue() + 1;
+														countDependenciesMap.replace(lib, count);
+													} else {
+														countDependenciesMap.put(lib, 1);
+													}
+												} else if (lib
+														.startsWith(project.getBuild().getTestOutputDirectory())) {
+													lib = project.getBuild().getTestOutputDirectory();
+													if (countDependenciesMap.containsKey(lib)) {
+														int count = countDependenciesMap.get(lib).intValue() + 1;
+														countDependenciesMap.replace(lib, count);
+													} else {
+														countDependenciesMap.put(lib, 1);
+													}
+												} else {
+													getLog().error(" * lib not found : " + lib);
+												}
+											} else {
 												getLog().debug("** lib name : " + lib);
 
 												if (countDependenciesMap.containsKey(lib)) {
@@ -166,11 +178,9 @@ public class MyMojo extends AbstractMojo {
 										}
 
 									} else {
-
+										getLog().error(" * 1 reference not found in : " + method.getLongName());
 									}
-
 									getLog().debug("********************************");
-
 								}
 							});
 						}
@@ -182,13 +192,13 @@ public class MyMojo extends AbstractMojo {
 					}
 				}
 			}
-			
+
 			Set<String> libRefCount = new HashSet<>();
 			Set<String> libUnsedRef = new HashSet<>();
-			
+
 			for (String libKey : countDependenciesMap.keySet()) {
 				int countRef = countDependenciesMap.get(libKey);
-				if (countRef == 0){
+				if (countRef == 0) {
 					libUnsedRef.add("# " + libKey);
 				} else {
 					libRefCount.add("# " + libKey + " : " + countDependenciesMap.get(libKey));
@@ -248,5 +258,4 @@ public class MyMojo extends AbstractMojo {
 			throw new MojoExecutionException("Problem to add classpath in javassist class pool.", e);
 		}
 	}
-
 }
