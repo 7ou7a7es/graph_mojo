@@ -1,4 +1,4 @@
-package com.deerbelling;
+package com.deerbelling.mojo;
 
 import java.io.File;
 import java.net.URL;
