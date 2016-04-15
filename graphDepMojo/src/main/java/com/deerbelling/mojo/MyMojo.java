@@ -16,13 +16,13 @@ import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.project.MavenProject;
 
+import com.deerbelling.expr.CountMethodDependencies;
+
 import javassist.CannotCompileException;
 import javassist.ClassPool;
 import javassist.CtClass;
 import javassist.CtMethod;
 import javassist.NotFoundException;
-import javassist.expr.ExprEditor;
-import javassist.expr.MethodCall;
 
 /**
  * Goal which touches a timestamp file.
@@ -112,77 +112,10 @@ public class MyMojo extends AbstractMojo {
 						for (CtMethod method : methods) {
 							getLog().debug("******* method : " + method.getLongName());
 
-							method.instrument(new ExprEditor() {
+							method.instrument(new CountMethodDependencies(getLog(), method, countDependenciesMap,
+									countExternalLibMap, project.getBuild().getOutputDirectory(),
+									project.getBuild().getTestOutputDirectory()));
 
-								@Override
-								public void edit(MethodCall m) throws CannotCompileException {
-
-									if (m != null && StringUtils.isNotBlank(m.getClassName())) {
-
-										getLog().debug("** callee ClassName : " + m.getClassName());
-										getLog().debug("** callee MethodName : " + m.getMethodName());
-										getLog().debug("** callee Signature : " + m.getSignature());
-
-										String className = m.getClassName();
-
-										if (method.getDeclaringClass() != null
-												&& StringUtils.isNotBlank(method.getDeclaringClass().getName())
-												&& !className.equals(method.getDeclaringClass().getName())) {
-											className = method.getDeclaringClass().getName();
-											getLog().debug("** callee DeclaringClass : " + className);
-										}
-
-										String classFilePath = m.getClassName().replace('.', '/') + ".class";
-										URL url = urlClassLoader.getResource(classFilePath);
-
-										getLog().debug("** find in : " + url);
-
-										if (url != null) {
-											String file = url.getFile();
-											int endIndex = (file.contains("!")) ? file.lastIndexOf('!') : file.length();
-											String lib = file.substring((file.lastIndexOf(':') + 1), endIndex);
-											if (lib.endsWith(".class")) {
-												if (lib.startsWith(project.getBuild().getOutputDirectory())) {
-													lib = project.getBuild().getOutputDirectory();
-													if (countDependenciesMap.containsKey(lib)) {
-														int count = countDependenciesMap.get(lib).intValue() + 1;
-														countDependenciesMap.replace(lib, count);
-													} else {
-														countDependenciesMap.put(lib, 1);
-													}
-												} else if (lib
-														.startsWith(project.getBuild().getTestOutputDirectory())) {
-													lib = project.getBuild().getTestOutputDirectory();
-													if (countDependenciesMap.containsKey(lib)) {
-														int count = countDependenciesMap.get(lib).intValue() + 1;
-														countDependenciesMap.replace(lib, count);
-													} else {
-														countDependenciesMap.put(lib, 1);
-													}
-												} else {
-													getLog().error(" * lib not found : " + lib);
-												}
-											} else {
-												getLog().debug("** lib name : " + lib);
-
-												if (countDependenciesMap.containsKey(lib)) {
-													int count = countDependenciesMap.get(lib).intValue() + 1;
-													countDependenciesMap.replace(lib, count);
-												} else if (countExternalLibMap.containsKey(lib)) {
-													int count = countExternalLibMap.get(lib).intValue() + 1;
-													countExternalLibMap.replace(lib, count);
-												} else {
-													countExternalLibMap.put(lib, 1);
-												}
-											}
-										}
-
-									} else {
-										getLog().error(" * 1 reference not found in : " + method.getLongName());
-									}
-									getLog().debug("********************************");
-								}
-							});
 						}
 
 					} catch (NotFoundException e) {

@@ -46,7 +46,7 @@ public class CountMethodDependencies extends ExprEditor {
 	public void edit(MethodCall m) throws CannotCompileException {
 
 		if (m != null && StringUtils.isNotBlank(m.getClassName())) {
-
+			
 			getLog().debug("** callee ClassName : " + m.getClassName());
 			getLog().debug("** callee MethodName : " + m.getMethodName());
 			getLog().debug("** callee Signature : " + m.getSignature());
