@@ -1,6 +1,8 @@
 package com.deerbelling.mojo;
 
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.HashMap;
@@ -17,21 +19,25 @@ import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.project.MavenProject;
 
 import com.deerbelling.expr.CountMethodDependencies;
+import com.deerbelling.pdf.DocWriter;
+import com.deerbelling.pdf.ItextElementFactory;
+import com.itextpdf.text.DocumentException;
 
 import javassist.CannotCompileException;
 import javassist.ClassPool;
+import javassist.CtBehavior;
 import javassist.CtClass;
-import javassist.CtMethod;
+import javassist.CtField;
 import javassist.NotFoundException;
 
 /**
- * Goal which touches a timestamp file.
+ * Goal to analyse dependencies graph.
  *
- * @goal touch
+ * @goal analyse
  * @requiresDependencyResolution test
  * 
  */
-public class MyMojo extends AbstractMojo {
+public class GraphDepMojo extends AbstractMojo {
 
 	/**
 	 * @parameter expression="${project}"
@@ -89,6 +95,10 @@ public class MyMojo extends AbstractMojo {
 
 			getLog().debug("****************************************** ");
 
+			CountMethodDependencies editor = new CountMethodDependencies(getLog(), countDependenciesMap,
+					countExternalLibMap, project.getBuild().getOutputDirectory(),
+					project.getBuild().getTestOutputDirectory());
+
 			for (String dirname : classMap.keySet()) {
 
 				for (File file : classMap.get(dirname)) {
@@ -108,14 +118,25 @@ public class MyMojo extends AbstractMojo {
 					try {
 						CtClass ctClass = pool.get(classname);
 						getLog().debug("javassist class : " + ctClass.getName());
-						CtMethod[] methods = ctClass.getDeclaredMethods();
-						for (CtMethod method : methods) {
-							getLog().debug("******* method : " + method.getLongName());
 
-							method.instrument(new CountMethodDependencies(getLog(), method, countDependenciesMap,
-									countExternalLibMap, project.getBuild().getOutputDirectory(),
-									project.getBuild().getTestOutputDirectory()));
+						editor.countAnno(ctClass);
 
+						for (CtField field : ctClass.getDeclaredFields()) {
+
+							if (field.getType() != null && field.getType().getName() != null) {
+								editor.count(field.getType().getName());
+							}
+							editor.countAnno(field);
+						}
+
+						for (CtBehavior behavior : ctClass.getDeclaredBehaviors()) {
+							getLog().debug("******* method or constructor : " + behavior.getLongName());
+
+							editor.setBehavior(behavior);
+
+							behavior.instrument(editor);
+
+							editor.countAnno(behavior);
 						}
 
 					} catch (NotFoundException e) {
@@ -152,8 +173,23 @@ public class MyMojo extends AbstractMojo {
 			}
 			getLog().info(StringUtils.repeat('#', LABEL_REF_COUNT.length() + project.getName().length()));
 
+			DocWriter doc = new DocWriter("./target/piechart.pdf");
+			doc.writeChartsToPdf(550, 350,
+					ItextElementFactory.generateBarChart("Referenced dependencies usage", countDependenciesMap),
+					ItextElementFactory.generateBarChart("Non declared dependencies usage", countExternalLibMap));
+			doc.writeCellToPdf(ItextElementFactory.generateList("Unused dependencies", libUnsedRef));
+			
+			// TODO move to finally.
+			doc.close();
+
 		} catch (DependencyResolutionRequiredException e) {
 			throw new MojoExecutionException("Required dependecy problem.", e);
+		} catch (FileNotFoundException | DocumentException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
 		}
 	}
 
