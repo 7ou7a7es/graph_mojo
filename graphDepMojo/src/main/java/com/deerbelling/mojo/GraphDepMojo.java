@@ -5,6 +5,8 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -173,12 +175,13 @@ public class GraphDepMojo extends AbstractMojo {
 			}
 			getLog().info(StringUtils.repeat('#', LABEL_REF_COUNT.length() + project.getName().length()));
 
-			DocWriter doc = new DocWriter("./target/piechart.pdf");
+			DocWriter doc = new DocWriter("./target/" + new SimpleDateFormat("yyyyMMdd").format(new Date()) + "_"
+					+ project.getArtifactId() + "_GraphDep.pdf");
 			doc.writeChartsToPdf(550, 350,
 					ItextElementFactory.generateBarChart("Referenced dependencies usage", countDependenciesMap),
 					ItextElementFactory.generateBarChart("Non declared dependencies usage", countExternalLibMap));
 			doc.writeCellToPdf(ItextElementFactory.generateList("Unused dependencies", libUnsedRef));
-			
+
 			// TODO move to finally.
 			doc.close();
 

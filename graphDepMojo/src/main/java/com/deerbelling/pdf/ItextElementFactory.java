@@ -63,7 +63,6 @@ public class ItextElementFactory {
 		BarRenderer renderer = (BarRenderer) plot.getRenderer();
 
 		// set the color (r,g,b) or (r,g,b,a)
-//		Color color = new Color(79, 129, 189);
 		renderer.setSeriesPaint(0, new Color(230, 130, 0));
 		
 		return chart;
